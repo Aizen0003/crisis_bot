@@ -1,93 +1,93 @@
 # 🚨 Crisis Intelligence Command Center
+
 **A Multimodal RAG System for National Disaster Response**
 
-![Project Status](https://img.shields.io/badge/Status-Prototype-orange)
-![Python](https://img.shields.io/badge/Python-3.9%2B-blue)
-![Stack](https://img.shields.io/badge/Stack-Streamlit%20%7C%20Qdrant%20%7C%20Gemini-green)
+[![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)](https://python.org)
+[![Streamlit](https://img.shields.io/badge/Streamlit-1.56-FF4B4B?logo=streamlit&logoColor=white)](https://streamlit.io)
+[![Qdrant](https://img.shields.io/badge/Qdrant-Vector_DB-DC244C?logo=data:image/png;base64,iVBORw0KGgo=)](https://qdrant.tech)
+[![Gemini](https://img.shields.io/badge/Gemini-2.5_Flash-4285F4?logo=google&logoColor=white)](https://ai.google.dev)
+[![CLIP](https://img.shields.io/badge/CLIP-ViT--B--32-412991?logo=openai&logoColor=white)](https://openai.com/research/clip)
+
+---
 
 ## 📖 Overview
-In the chaotic aftermath of natural disasters, critical information is often fragmented across radio logs, text reports, and visual evidence (drone/CCTV footage). The **Crisis Intelligence Command Center** bridges this gap.
 
-This is a **Multimodal Retrieval-Augmented Generation (RAG)** application that allows emergency responders to:
-1.  **Ingest** both text logs and images into a shared vector space.
-2.  **Query** the database using natural language (e.g., *"Show me flooding in the north"*).
-3.  **Retrieve** grounded evidence: The AI fetches the exact text report *and* the matching visual evidence.
-4.  **Reason** across modalities to provide actionable situational awareness.
+In the chaotic aftermath of natural disasters, critical information is fragmented across radio logs, text reports, and visual evidence (drone/CCTV footage). The **Crisis Intelligence Command Center** bridges this gap.
+
+This is a **Multimodal Retrieval-Augmented Generation (RAG)** system with a **multi-agent architecture** that allows emergency responders to:
+
+1. **Ingest** text logs and images with automatic severity classification and geocoding
+2. **Query** using natural language (e.g., *"Show me flooding in Assam"*)
+3. **Retrieve** grounded evidence — the AI fetches matching text reports *and* visual evidence
+4. **Visualize** crisis data on an interactive GIS map with severity indicators
+5. **Analyze** disaster statistics through an analytics dashboard
 
 ---
 
 ## 🧠 System Architecture
-The system utilizes a **Dual-Stream Vector Architecture** to handle different data types without losing semantic precision.
 
-### 1. The Ingestion Layer
-- **Text Logs:** Processed by `all-MiniLM-L6-v2` (384-dimensional embeddings) -> Stored in `user_episodic_memory`.
-- **Images:** Processed by **OpenAI CLIP** (`clip-ViT-B-32`, 512-dimensional embeddings) -> Stored in `disaster_multimodal`.
+### Multi-Agent Pipeline
 
-### 2. The Retrieval Layer (Parallel Search)
-When a user asks a question, the system performs two simultaneous vector searches:
-- **Semantic Text Search:** Finds relevant chat history and system reports (Threshold: >0.40).
-- **Visual Similarity Search:** Finds relevant images using CLIP (Threshold: >0.25).
+The system uses three specialized agents that form a pipeline:
 
-### 3. The Generation Layer
-- **Context Aggregation:** Text logs and Image metadata are combined.
-- **Reasoning:** **Google Gemini 1.5 Flash** synthesizes the evidence into a final response.
-- **Safety:** Negative constraints (e.g., "Don't show...") function as a final guardrail.
+```
+User Query → [Retrieval Agent] → [Triage Agent] → [Synthesis Agent] → Response
+                    ↓                    ↓                  ↓
+              Parallel Search    Severity/Type       Gemini LLM with
+              (Text + CLIP)     Classification      Citation Protocol
+```
 
-### 4. Diagram
+### Architecture Layers
+
+| Layer | Component | Technology |
+|-------|-----------|-----------|
+| **Ingestion** | Text encoding | `all-MiniLM-L6-v2` (384d vectors) |
+| | Image encoding | `CLIP ViT-B-32` (512d vectors) |
+| | Metadata enrichment | Triage Agent (severity, disaster type, geocoding) |
+| **Storage** | Text memory | Qdrant `user_episodic_memory` collection |
+| | Visual memory | Qdrant `disaster_multimodal` collection |
+| **Retrieval** | Semantic search | Dual-stream parallel vector search |
+| | Filtering | Metadata filters (disaster type, severity, region) |
+| | Re-ranking | Recency-based score adjustment with decay |
+| **Generation** | LLM synthesis | Google Gemini 2.5 Flash with citation protocol |
+| **UI** | Dashboard | Streamlit with custom dark theme |
+| | Map | Folium with geocoded disaster markers |
+| | Analytics | Plotly charts (severity, type, region distribution) |
+
+### Architecture Diagram
+
 ```mermaid
 graph LR
-    %% -- STYLING DEFINITIONS --
-    classDef ingest fill:#e3f2fd,stroke:#1565c0,stroke-width:2px,color:#000
-    classDef store fill:#fff3e0,stroke:#ef6c00,stroke-width:2px,color:#000
-    classDef process fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px,color:#000
-    classDef user fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px,color:#000
-
-    %% -- LAYER 1: INGESTION --
-    subgraph L1 ["Layer 1: Dual-Stream Ingestion"]
+    subgraph Ingestion ["Layer 1: Dual-Stream Ingestion"]
         direction TB
-        RAW_TXT["📄 Text Logs<br/>(data_logs.txt)"]:::ingest
-        RAW_IMG["🖼️ Disaster Images<br/>(/data_images)"]:::ingest
-        
-        MODEL_TXT["⚙️ Encoder: MiniLM-L6-v2"]:::ingest
-        MODEL_IMG["⚙️ Encoder: CLIP ViT-B-32"]:::ingest
-        
-        RAW_TXT --> MODEL_TXT
-        RAW_IMG --> MODEL_IMG
+        TXT["📄 Text Logs"] --> ENC_T["⚙️ MiniLM-L6-v2"]
+        IMG["🖼️ Images"] --> ENC_I["⚙️ CLIP ViT-B-32"]
+        TXT --> TRIAGE["🏷️ Triage Agent"]
     end
 
-    %% -- LAYER 2: VECTOR STORAGE --
-    subgraph L2 ["Layer 2: Qdrant Memory"]
-        Q_TXT[("🗄️ Collection:<br/>user_episodic_memory")]:::store
-        Q_IMG[("🗄️ Collection:<br/>disaster_multimodal")]:::store
-        
-        MODEL_TXT -- "384d Vector" --> Q_TXT
-        MODEL_IMG -- "512d Vector" --> Q_IMG
+    subgraph Qdrant ["Layer 2: Qdrant Vector Memory"]
+        Q_TXT[("user_episodic_memory<br/>384d")]
+        Q_IMG[("disaster_multimodal<br/>512d")]
     end
 
-    %% -- LAYER 3: REAL-TIME INTERACTION --
-    subgraph L3 ["Layer 3: RAG Inference"]
-        UI(("👤 Responder<br/>(Streamlit UI)")):::user
-        
-        SEARCH_LOGIC{"🔍 Parallel Search"}:::process
-        
-        FILTER_LOGIC{"🛑 Threshold Filter<br/>(Text > 0.40 | Img > 0.25)"}:::process
-        
-        LLM["🧠 Google Gemini<br/>2.5 Flash"]:::process
-        
-        UI -- "Query: 'Show floods'" --> SEARCH_LOGIC
-        
-        SEARCH_LOGIC -- "Semantic Search" --> Q_TXT
-        SEARCH_LOGIC -- "Visual Search" --> Q_IMG
-        
-        Q_TXT -. "Retrieved Logs" .-> FILTER_LOGIC
-        Q_IMG -. "Retrieved Photos" .-> FILTER_LOGIC
-        
-        FILTER_LOGIC -- "Unified Context" --> LLM
-        LLM -- "Grounded Response" --> UI
+    subgraph RAG ["Layer 3: Multi-Agent RAG"]
+        SEARCH["🔍 Retrieval Agent"]
+        FILTER["🛑 Threshold Filter<br/>+ Re-ranking"]
+        LLM["🧠 Synthesis Agent<br/>Gemini 2.5 Flash"]
+        UI(("👤 Commander<br/>Streamlit UI"))
     end
 
-    %% -- CROSS-LAYER LINKS --
-    %% (These are defined above but laid out here for clarity)
+    ENC_T -- "384d vector" --> Q_TXT
+    ENC_I -- "512d vector" --> Q_IMG
+    TRIAGE -- "metadata" --> Q_TXT
+
+    UI -- "Query" --> SEARCH
+    SEARCH -- "Semantic" --> Q_TXT
+    SEARCH -- "Visual" --> Q_IMG
+    Q_TXT -. "Retrieved Logs" .-> FILTER
+    Q_IMG -. "Retrieved Photos" .-> FILTER
+    FILTER -- "Unified Context" --> LLM
+    LLM -- "Cited Response" --> UI
 ```
 
 ---
@@ -95,89 +95,148 @@ graph LR
 ## 🛠️ Installation & Setup
 
 ### Prerequisites
-- Python 3.9+
-- A [Qdrant Cloud](https://cloud.qdrant.io/) Account (Free Tier is sufficient)
-- A [Google AI Studio](https://aistudio.google.com/) API Key
+- Python 3.11+ (Conda recommended)
+- [Qdrant Cloud](https://cloud.qdrant.io/) account (free tier works)
+- [Google AI Studio](https://aistudio.google.com/) API key
 
-### 1. Clone the Repository
+### 1. Clone & Setup Environment
+
 ```bash
-git clone [https://github.com/YOUR_USERNAME/Crisis-Intelligence-AI.git](https://github.com/YOUR_USERNAME/Crisis-Intelligence-AI.git)
+git clone https://github.com/Aizen0003/Crisis-Intelligence-AI.git
 cd Crisis-Intelligence-AI
 
+# Create conda environment
+conda create --name convolve_env python=3.11 -y
+conda activate convolve_env
+
+# Install dependencies
+pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cpu
 ```
 
-### 2. Install Dependencies
+### 2. Configure API Keys
 
 ```bash
-pip install -r requirements.txt
-
+cp .env.example .env
+# Edit .env with your actual keys
 ```
-
-### 3. Configure Environment
-
-Create a `.env` file in the root directory and add your API keys:
 
 ```ini
-GEMINI_API_KEY=your_google_api_key_here
-QDRANT_URL=your_qdrant_cluster_url
+GEMINI_API_KEY=your_google_api_key
+QDRANT_URL=https://your-cluster.cloud.qdrant.io:6333
 QDRANT_API_KEY=your_qdrant_api_key
-
 ```
 
-### 4. Load Base Data (Simulated Scenario)
-
-This script will ingest the 50+ Pan-India disaster logs and images into your vector database.
+### 3. Ingest Data
 
 ```bash
 python ingest_bulk.py
-
 ```
 
-*Note: Ensure your images are in the `data/data_images/` folder and logs are in `data/data_logs.txt`.*
+This will:
+- Encode 61 Pan-India disaster text logs with MiniLM-L6-v2
+- Encode 26 disaster images with CLIP ViT-B-32
+- Auto-classify disaster types and severity levels
+- Geocode locations for map visualization
 
-### 5. Run the Application
+### 4. Run the Application
 
 ```bash
 streamlit run app.py
-
 ```
 
 ---
 
 ## 💡 Key Features
 
-### 🔄 Stateful Memory with "Safe Reset"
+### 🤖 Multi-Agent Architecture
+Three specialized agents handle different aspects of the pipeline:
+- **Triage Agent**: Classifies disaster type and severity using keyword heuristics
+- **Retrieval Agent**: Orchestrates parallel search with metadata filtering
+- **Synthesis Agent**: Generates cited, evidence-grounded responses via Gemini
 
-The system maintains a conversation history so you can ask follow-up questions.
+### 🔍 Advanced Qdrant Integration
+- **Dual collections** with different vector dimensions (384d text, 512d CLIP)
+- **Metadata filtering** by disaster type, severity, and region
+- **Smart memory management**: "Safe Reset" preserves base data while clearing conversation history
+- **Recency-based decay**: Older memories get reduced relevance scores
 
-* **Smart Wipe:** The "Start New Scenario" button clears *only* the user conversation (`role="user"`) but **preserves** the System Reports (`role="system_report"`).
-* **Benefit:** You can run back-to-back demos without re-ingesting data.
+### 🗺️ Interactive Crisis Map
+- Folium map centered on India with CartoDB dark tiles
+- Color-coded markers by disaster type (flood=blue, fire=red, etc.)
+- Interactive popups with severity badges and report excerpts
+- Severity and type distribution summaries
 
-### 👁️ Multimodal "Grounding"
+### 📊 Analytics Dashboard
+- Plotly charts: disaster type pie chart, severity bar chart, regional distribution
+- Real-time Qdrant collection health metrics
+- Source agency breakdown
 
-Unlike standard chatbots that hallucinate, this system provides **Evidence citations**.
-
-* If it says "There is a flood," it displays the **retrieved image** and the **source text log** that led to that conclusion.
+### 🧠 Evidence-Based Responses
+- All AI responses cite specific sources (`[Source 1]`, `[Source 2]`)
+- Expandable reasoning trace shows what was retrieved and why
+- Similarity scores displayed for full transparency
 
 ---
 
 ## 📂 Project Structure
 
-```text
-Crisis-Intelligence-AI/
-├── data/
-│   ├── data_images/        # Disaster imagery for the demo
-│   └── data_logs.txt       # Text logs matching the images
-├── documents/              # Project Report & System Design PDF
-│   ├── Final_Report.pdf    
-│   └── architecture.png    
-├── app.py                  # Main Streamlit Application
-├── ingest_bulk.py          # Data Ingestion Script
-├── requirements.txt        # Python Dependencies
-└── README.md               # Documentation           
 ```
+Crisis-Intelligence-AI/
+├── app.py                      # Main Streamlit entry point
+├── ingest_bulk.py              # Data ingestion with metadata enrichment
+├── requirements.txt            # Python dependencies
+├── .env.example                # API key template
+├── data_logs.txt               # 61 Pan-India disaster text logs
+├── data_images/                # 26 disaster photographs
+├── src/
+│   ├── config.py               # Centralized configuration & constants
+│   ├── embeddings.py           # Text & CLIP encoder wrappers
+│   ├── qdrant_manager.py       # Qdrant CRUD operations
+│   ├── retrieval.py            # Search engine with re-ranking
+│   ├── memory.py               # Episodic memory lifecycle
+│   ├── agents/
+│   │   ├── triage_agent.py     # Disaster type & severity classifier
+│   │   ├── retrieval_agent.py  # Multi-collection search orchestrator
+│   │   └── synthesis_agent.py  # Gemini-powered response generator
+│   ├── ui/
+│   │   ├── dashboard.py        # Main dashboard layout
+│   │   ├── chat.py             # Chat interface component
+│   │   ├── map_view.py         # Folium GIS map component
+│   │   ├── analytics.py        # Plotly analytics dashboard
+│   │   └── styles.py           # Custom dark theme CSS
+│   └── utils/
+│       ├── location_extractor.py  # Geocoding utility
+│       └── logger.py              # Structured logging
+├── documents/
+│   ├── Final_Report.md         # Project report (10 pages)
+│   └── architecture.png        # System architecture diagram
+└── README.md
+```
+
+---
 
 ## ⚠️ Limitations
 
-* **API Dependency:** Requires internet connectivity for Google Gemini and Qdrant Cloud.
-* **Visual Thresholds:** Low-confidence image matches (score < 0.25) are suppressed to prevent misinformation.
+| Limitation | Detail |
+|---|---|
+| **API Dependency** | Requires internet for Gemini and Qdrant Cloud |
+| **Semantic Ambiguity** | Low-data scenarios may force incorrect matches |
+| **CLIP Bias** | Model may underperform on South Asian rural landscapes |
+| **Privacy** | Production deployment must comply with DPDP Act 2023 |
+| **Human-in-the-Loop** | AI suggestions must always be verified by commanders |
+
+---
+
+## 🚀 Future Roadmap
+
+- [ ] Voice interface via Speech-to-Text for radio commands
+- [ ] Local LLM deployment (Llama 3) for offline operation
+- [ ] Real-time data streaming from social media APIs
+- [ ] Satellite imagery integration for damage assessment
+- [ ] Multi-language support for regional disaster communication
+
+---
+
+## 📜 License
+
+This project was built for **Convolve 4.0**, a Pan-IIT AI/ML Hackathon, as part of the Qdrant problem statement on *Search, Memory, and Recommendations for Societal Impact*.
