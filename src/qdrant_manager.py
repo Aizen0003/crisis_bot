@@ -8,19 +8,44 @@ import uuid
 import streamlit as st
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
+from qdrant_client.http.exceptions import UnexpectedResponse
 from src.config import (
     QDRANT_URL, QDRANT_API_KEY,
     COLLECTION_EPISODIC, COLLECTION_MULTIMODAL,
     TEXT_VECTOR_DIM, CLIP_VECTOR_DIM,
+    IMAGE_RELEVANCE_THRESHOLD,
+    validate_config,
 )
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 
+class QdrantSearchError(RuntimeError):
+    """Raised when a Qdrant vector search fails, so callers can surface it."""
+
+
+# Stable namespace so the same content always maps to the same point ID.
+# This makes ingestion idempotent: re-running upserts overwrite rather than
+# duplicate, because Qdrant upsert is keyed on point ID.
+_ID_NAMESPACE = uuid.UUID("6f9619ff-8b86-d011-b42d-00cf4fc964ff")
+
+
+def deterministic_id(content: str) -> str:
+    """
+    Derive a stable UUID5 point ID from stable content.
+
+    Identical content (a text log line, or an image's stable key) always
+    produces the same ID, so re-ingesting the same data updates the existing
+    point instead of inserting a duplicate.
+    """
+    return str(uuid.uuid5(_ID_NAMESPACE, content))
+
+
 @st.cache_resource
 def get_qdrant_client() -> QdrantClient:
     """Create and cache a Qdrant client connection."""
+    validate_config(require=("QDRANT_URL", "QDRANT_API_KEY"))
     try:
         client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY, timeout=30)
         logger.info("Connected to Qdrant Cloud")
@@ -55,30 +80,37 @@ def ensure_collections():
             logger.info(f"Collection already exists: {name}")
     
     # Ensure payload indexes for filtered queries
-    # Qdrant requires explicit keyword indexes for filter operations
+    # Qdrant requires explicit keyword indexes for filter operations.
     episodic_indexes = ["role", "disaster_type", "severity", "region", "source_agency"]
-    for field in episodic_indexes:
-        try:
-            client.create_payload_index(
-                collection_name=COLLECTION_EPISODIC,
-                field_name=field,
-                field_schema=models.PayloadSchemaType.KEYWORD,
-            )
-        except Exception:
-            pass  # Index may already exist
-    
     multimodal_indexes = ["type", "description", "region"]
-    for field in multimodal_indexes:
+    _ensure_payload_indexes(client, COLLECTION_EPISODIC, episodic_indexes)
+    _ensure_payload_indexes(client, COLLECTION_MULTIMODAL, multimodal_indexes)
+
+    logger.info("Payload indexes ensured for all collections")
+
+
+def _ensure_payload_indexes(client: QdrantClient, collection: str, fields: list[str]):
+    """
+    Create keyword payload indexes, tolerating the "already exists" case.
+
+    An index that already exists raises an UnexpectedResponse (HTTP 4xx),
+    which is expected and harmless. Any other error is logged so genuine
+    indexing problems are not silently swallowed.
+    """
+    for field in fields:
         try:
             client.create_payload_index(
-                collection_name=COLLECTION_MULTIMODAL,
+                collection_name=collection,
                 field_name=field,
                 field_schema=models.PayloadSchemaType.KEYWORD,
             )
-        except Exception:
-            pass  # Index may already exist
-    
-    logger.info("Payload indexes ensured for all collections")
+        except UnexpectedResponse:
+            # Index already exists — expected on re-runs.
+            logger.debug(f"Payload index already present: {collection}.{field}")
+        except Exception as e:
+            logger.warning(
+                f"Could not create payload index {collection}.{field}: {e}"
+            )
 
 
 def upsert_text_point(text: str, vector: list[float], role: str, metadata: dict = None):
@@ -111,17 +143,19 @@ def upsert_text_points_batch(points_data: list[dict]):
         payload = {"chat_text": item["text"], "role": item["role"]}
         if item.get("metadata"):
             payload.update(item["metadata"])
+        # Deterministic ID keyed on the report content → idempotent re-ingest.
+        point_id = item.get("id") or deterministic_id(item["text"])
         points.append(models.PointStruct(
-            id=str(uuid.uuid4()),
+            id=point_id,
             vector=item["vector"],
             payload=payload,
         ))
-    
+
     # Batch in chunks of 100
     for i in range(0, len(points), 100):
         chunk = points[i:i+100]
         client.upsert(collection_name=COLLECTION_EPISODIC, points=chunk)
-    
+
     logger.info(f"Batch upserted {len(points)} text points")
 
 
@@ -140,8 +174,10 @@ def upsert_image_points_batch(points_data: list[dict]):
         }
         if item.get("metadata"):
             payload.update(item["metadata"])
+        # Deterministic ID keyed on the image's stable key (filename) → idempotent.
+        point_id = item.get("id") or deterministic_id(item.get("id_key", item["filename"]))
         points.append(models.PointStruct(
-            id=str(uuid.uuid4()),
+            id=point_id,
             vector=item["vector"],
             payload=payload,
         ))
@@ -186,11 +222,11 @@ def search_text(query_vector: list[float], limit: int = 5, score_threshold: floa
         return results
     except Exception as e:
         logger.error(f"Text search failed: {e}")
-        return []
+        raise QdrantSearchError(f"Text vector search failed: {e}") from e
 
 
 def search_images(query_vector: list[float], limit: int = 3,
-                  score_threshold: float = 0.22) -> list:
+                  score_threshold: float = IMAGE_RELEVANCE_THRESHOLD) -> list:
     """Search the multimodal collection for matching images."""
     client = get_qdrant_client()
     
@@ -204,7 +240,7 @@ def search_images(query_vector: list[float], limit: int = 3,
         return results
     except Exception as e:
         logger.error(f"Image search failed: {e}")
-        return []
+        raise QdrantSearchError(f"Image vector search failed: {e}") from e
 
 
 def clear_conversation_memory():

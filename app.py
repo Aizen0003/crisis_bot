@@ -4,7 +4,8 @@ Crisis Intelligence Command Center
 A Multimodal RAG System for National Disaster Response
 
 Entry point for the Streamlit application.
-Uses modular architecture with multi-agent retrieval pipeline.
+The chat pipeline is orchestrated by a LangGraph workflow (see src/graph),
+with Gemini and Qdrant accessed through LangChain adapters (see src/langchain_adapters).
 
 Usage:
     streamlit run app.py

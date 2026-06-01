@@ -32,6 +32,12 @@ IMAGE_RELEVANCE_THRESHOLD = 0.30   # Raised from 0.22 to filter weak CLIP matche
 TEXT_SEARCH_LIMIT = 5
 IMAGE_SEARCH_LIMIT = 5             # Fetch more, then deduplicate
 
+# ── Base Evidence Role ───────────────────────────────────────────────
+# Base disaster reports are stored with this role. Conversation memory
+# (user/assistant turns) is stored separately so it does not pollute
+# grounded base-evidence retrieval.
+SYSTEM_REPORT_ROLE = "system_report"
+
 # ── Memory Decay ─────────────────────────────────────────────────────
 MEMORY_DECAY_HOURS = 48          # Memories older than this get reduced weight
 MEMORY_DECAY_FACTOR = 0.7        # Multiplier applied to decayed memories
@@ -115,3 +121,37 @@ TEXT_FILE = "data_logs.txt"
 APP_TITLE = "Crisis Intelligence Command Center"
 APP_ICON = "🚨"
 APP_LAYOUT = "wide"
+
+
+# ── Configuration Validation ─────────────────────────────────────────
+class ConfigError(RuntimeError):
+    """Raised when required environment configuration is missing or invalid."""
+
+
+_REQUIRED_ENV = {
+    "GEMINI_API_KEY": GEMINI_API_KEY,
+    "QDRANT_URL": QDRANT_URL,
+    "QDRANT_API_KEY": QDRANT_API_KEY,
+}
+
+
+def validate_config(require: tuple[str, ...] = ("GEMINI_API_KEY", "QDRANT_URL", "QDRANT_API_KEY")):
+    """
+    Validate that required environment variables are present.
+
+    Raises ConfigError with a clear, human-readable message listing the
+    missing keys and how to fix them. Never prints secret values.
+
+    Args:
+        require: which keys must be present for the current operation.
+    """
+    missing = [key for key in require if not _REQUIRED_ENV.get(key, "").strip()]
+    if missing:
+        raise ConfigError(
+            "Missing required environment variable(s): "
+            + ", ".join(missing)
+            + ".\n\nFix: copy `.env.example` to `.env` and fill in your keys:\n"
+            "    cp .env.example .env\n"
+            "Required keys: GEMINI_API_KEY, QDRANT_URL, QDRANT_API_KEY.\n"
+            "(Values are read from the environment / .env and are never logged.)"
+        )

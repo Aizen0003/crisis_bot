@@ -13,6 +13,13 @@ torchvision>=0.15.0
 # Google Gemini
 google-genai>=1.0.0
 
+# LangChain + LangGraph orchestration
+langgraph>=1.0.0
+langchain>=1.0.0
+langchain-core>=1.0.0
+langchain-google-genai>=4.0.0
+langchain-qdrant>=0.2.0
+
 # Image Processing
 Pillow>=10.0.0
 
@@ -34,3 +41,6 @@ numpy>=1.24.0
 # Utilities
 tqdm>=4.66.0
 PyYAML>=6.0
+
+# Testing
+pytest>=8.0.0

@@ -17,6 +17,28 @@ from src.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
+def apply_recency_decay(score: float, timestamp_str: str | None) -> float:
+    """
+    Apply recency-based decay to a relevance score.
+
+    Reports older than MEMORY_DECAY_HOURS get their score multiplied by
+    MEMORY_DECAY_FACTOR. Returns the (possibly) adjusted score. Shared by the
+    legacy retrieval path and the LangGraph rerank node so behavior matches.
+    """
+    if not timestamp_str:
+        return score
+    try:
+        ts = datetime.fromisoformat(timestamp_str)
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        hours_old = (datetime.now(timezone.utc) - ts).total_seconds() / 3600
+        if hours_old > MEMORY_DECAY_HOURS:
+            return score * MEMORY_DECAY_FACTOR
+    except (ValueError, TypeError):
+        pass
+    return score
+
+
 def _apply_recency_boost(results: list) -> list:
     """
     Re-rank results by boosting recent entries.

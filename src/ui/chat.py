@@ -4,9 +4,7 @@ Handles message display, user input, and the full RAG interaction loop.
 """
 
 import streamlit as st
-from src.agents.retrieval_agent import execute_retrieval
-from src.agents.synthesis_agent import generate_response
-from src.memory import store_user_message, store_assistant_response
+from src.graph import run_crisis_graph
 import os
 
 
@@ -98,19 +96,22 @@ def handle_chat_input(disaster_filter: str = None, severity_filter: str = None,
     with st.chat_message("user"):
         st.markdown(prompt)
     
-    # ── Execute retrieval ─────────────────────────────────────────
-    with st.spinner("🔍 Searching vector databases..."):
-        retrieval_results = execute_retrieval(
+    # ── Run the LangGraph RAG workflow (retrieval + synthesis + memory) ──
+    with st.spinner("🧠 Running crisis intelligence workflow..."):
+        retrieval_results = run_crisis_graph(
             query=prompt,
-            disaster_filter=disaster_filter,
-            severity_filter=severity_filter,
-            region_filter=region_filter,
+            filters={
+                "disaster": disaster_filter,
+                "severity": severity_filter,
+                "region": region_filter,
+            },
         )
-    
-    # ── Generate response ─────────────────────────────────────────
-    with st.spinner("🧠 Synthesizing response..."):
-        response_text = generate_response(retrieval_results, prompt)
-    
+    response_text = retrieval_results["response"]
+
+    # Surface any actionable backend error to the operator.
+    if retrieval_results.get("error"):
+        st.error(retrieval_results["error"])
+
     # ── Display assistant response ────────────────────────────────
     with st.chat_message("assistant"):
         st.markdown(response_text)
@@ -138,7 +139,9 @@ def handle_chat_input(disaster_filter: str = None, severity_filter: str = None,
                 "reasoning_trace": retrieval_results["reasoning_trace"],
             })
     
-    # ── Store in session & memory ─────────────────────────────────
+    # ── Store in session state ────────────────────────────────────
+    # (Episodic memory in Qdrant is persisted inside the LangGraph workflow's
+    # persist_memory node, so we do not write it again here.)
     st.session_state.messages.append({
         "role": "assistant",
         "content": response_text,
@@ -146,9 +149,5 @@ def handle_chat_input(disaster_filter: str = None, severity_filter: str = None,
         "sources": retrieval_results["text_results"],
         "reasoning_trace": retrieval_results["reasoning_trace"],
     })
-    
-    # Store in Qdrant episodic memory
-    store_user_message(prompt)
-    store_assistant_response(response_text, query_context=prompt)
-    
+
     return retrieval_results

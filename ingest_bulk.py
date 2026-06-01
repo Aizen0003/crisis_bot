@@ -22,7 +22,7 @@ from PIL import Image
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from src.config import IMAGE_FOLDER, TEXT_FILE
+from src.config import IMAGE_FOLDER, TEXT_FILE, validate_config, ConfigError
 from src.qdrant_manager import (
     get_qdrant_client, ensure_collections,
     upsert_text_points_batch, upsert_image_points_batch,
@@ -205,6 +205,13 @@ def main():
     print("║   CRISIS INTELLIGENCE — DATA INGESTION ENGINE   ║")
     print("╚══════════════════════════════════════════════════╝\n")
     
+    # Validate environment before doing any work (no secrets are printed).
+    try:
+        validate_config(require=("QDRANT_URL", "QDRANT_API_KEY"))
+    except ConfigError as e:
+        logger.error(str(e))
+        sys.exit(1)
+
     # Initialize
     logger.info("Connecting to Qdrant...")
     _ = get_qdrant_client()

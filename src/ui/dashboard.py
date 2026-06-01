@@ -10,7 +10,10 @@ from src.ui.map_view import render_map_view
 from src.ui.analytics import render_analytics
 from src.qdrant_manager import ensure_collections, get_collection_stats
 from src.memory import reset_scenario
-from src.config import APP_TITLE, APP_ICON, APP_LAYOUT
+from src.config import (
+    APP_TITLE, APP_ICON, APP_LAYOUT,
+    TEXT_RELEVANCE_THRESHOLD, IMAGE_RELEVANCE_THRESHOLD,
+)
 
 
 def setup_page():
@@ -122,11 +125,12 @@ def render_sidebar() -> dict:
         
         # ── System Info ──────────────────────────────────────────────
         st.markdown("### ℹ️ System Info")
+        st.caption("**Orchestration:** LangGraph + LangChain")
         st.caption("**Models:** MiniLM-L6-v2 + CLIP ViT-B-32")
         st.caption("**LLM:** Google Gemini 2.5 Flash")
         st.caption("**Vector DB:** Qdrant Cloud")
-        st.caption("**Text Threshold:** > 0.35")
-        st.caption("**Image Threshold:** > 0.22")
+        st.caption(f"**Text Threshold:** > {TEXT_RELEVANCE_THRESHOLD}")
+        st.caption(f"**Image Threshold:** > {IMAGE_RELEVANCE_THRESHOLD}")
     
     return filters
 

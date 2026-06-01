@@ -14,11 +14,11 @@
 
 In the chaotic aftermath of natural disasters, critical information is fragmented across radio logs, text reports, and visual evidence (drone/CCTV footage). The **Crisis Intelligence Command Center** bridges this gap.
 
-This is a **Multimodal Retrieval-Augmented Generation (RAG)** system with a **multi-agent architecture** that allows emergency responders to:
+This is a **LangGraph-orchestrated, LangChain-powered Multimodal Retrieval-Augmented Generation (RAG)** system that allows emergency responders to:
 
 1. **Ingest** text logs and images with automatic severity classification and geocoding
 2. **Query** using natural language (e.g., *"Show me flooding in Assam"*)
-3. **Retrieve** grounded evidence — the AI fetches matching text reports *and* visual evidence
+3. **Retrieve** grounded evidence — the workflow fetches matching text reports *and* visual evidence
 4. **Visualize** crisis data on an interactive GIS map with severity indicators
 5. **Analyze** disaster statistics through an analytics dashboard
 
@@ -26,68 +26,63 @@ This is a **Multimodal Retrieval-Augmented Generation (RAG)** system with a **mu
 
 ## 🧠 System Architecture
 
-### Multi-Agent Pipeline
+### LangGraph-Orchestrated RAG Pipeline
 
-The system uses three specialized agents that form a pipeline:
+The RAG pipeline is modeled as an explicit, **typed state machine** built with
+`langgraph.graph.StateGraph` (`src/graph/crisis_graph.py`). Each step is a node;
+state flows through a `TypedDict` (`src/graph/state.py`). Gemini access and the
+synthesis prompt are standardized through **LangChain** (`ChatGoogleGenerativeAI`
++ `ChatPromptTemplate`), and Qdrant text/image search is wrapped behind LangChain
+`BaseRetriever` adapters.
 
-```
-User Query → [Retrieval Agent] → [Triage Agent] → [Synthesis Agent] → Response
-                    ↓                    ↓                  ↓
-              Parallel Search    Severity/Type       Gemini LLM with
-              (Text + CLIP)     Classification      Citation Protocol
-```
+| Node | Responsibility |
+|------|----------------|
+| `parse_query` | Detect text-only intent; normalize UI filters → Qdrant metadata filters |
+| `triage_query` | Heuristic disaster-type / severity of the query (keyword-based) |
+| `retrieve_text` | MiniLM 384d search over base reports (`role="system_report"`) |
+| `retrieve_images` | CLIP 512d cross-modal search (skipped on text-only queries) |
+| `rerank_context` | Recency decay + image dedupe + build cited LLM context blocks |
+| `synthesize_response` | Grounded, cited answer via LangChain `ChatGoogleGenerativeAI` |
+| `persist_memory` | Store the turn in episodic memory (non-fatal) |
+
+**Conditional routing:** text-only queries skip image retrieval entirely; if core
+text retrieval fails, the graph short-circuits to a graceful, actionable error
+instead of calling the LLM.
 
 ### Architecture Layers
 
 | Layer | Component | Technology |
 |-------|-----------|-----------|
+| **Orchestration** | RAG state machine | LangGraph `StateGraph` (typed nodes + conditional edges) |
+| | LLM + prompts | LangChain `ChatGoogleGenerativeAI` + `ChatPromptTemplate` |
+| | Retrievers | LangChain `BaseRetriever` adapters over Qdrant |
 | **Ingestion** | Text encoding | `all-MiniLM-L6-v2` (384d vectors) |
 | | Image encoding | `CLIP ViT-B-32` (512d vectors) |
-| | Metadata enrichment | Triage Agent (severity, disaster type, geocoding) |
-| **Storage** | Text memory | Qdrant `user_episodic_memory` collection |
-| | Visual memory | Qdrant `disaster_multimodal` collection |
-| **Retrieval** | Semantic search | Dual-stream parallel vector search |
+| | Metadata enrichment | Triage heuristics (severity, disaster type, geocoding) |
+| **Storage** | Text memory | Qdrant `user_episodic_memory` collection (384d) |
+| | Visual memory | Qdrant `disaster_multimodal` collection (512d) |
+| **Retrieval** | Semantic search | Dual-stream text + cross-modal image vector search |
 | | Filtering | Metadata filters (disaster type, severity, region) |
-| | Re-ranking | Recency-based score adjustment with decay |
+| | Re-ranking | Recency-based score decay |
 | **Generation** | LLM synthesis | Google Gemini 2.5 Flash with citation protocol |
 | **UI** | Dashboard | Streamlit with custom dark theme |
 | | Map | Folium with geocoded disaster markers |
 | | Analytics | Plotly charts (severity, type, region distribution) |
 
-### Architecture Diagram
+### LangGraph Workflow Diagram
 
 ```mermaid
-graph LR
-    subgraph Ingestion ["Layer 1: Dual-Stream Ingestion"]
-        direction TB
-        TXT["📄 Text Logs"] --> ENC_T["⚙️ MiniLM-L6-v2"]
-        IMG["🖼️ Images"] --> ENC_I["⚙️ CLIP ViT-B-32"]
-        TXT --> TRIAGE["🏷️ Triage Agent"]
-    end
-
-    subgraph Qdrant ["Layer 2: Qdrant Vector Memory"]
-        Q_TXT[("user_episodic_memory<br/>384d")]
-        Q_IMG[("disaster_multimodal<br/>512d")]
-    end
-
-    subgraph RAG ["Layer 3: Multi-Agent RAG"]
-        SEARCH["🔍 Retrieval Agent"]
-        FILTER["🛑 Threshold Filter<br/>+ Re-ranking"]
-        LLM["🧠 Synthesis Agent<br/>Gemini 2.5 Flash"]
-        UI(("👤 Commander<br/>Streamlit UI"))
-    end
-
-    ENC_T -- "384d vector" --> Q_TXT
-    ENC_I -- "512d vector" --> Q_IMG
-    TRIAGE -- "metadata" --> Q_TXT
-
-    UI -- "Query" --> SEARCH
-    SEARCH -- "Semantic" --> Q_TXT
-    SEARCH -- "Visual" --> Q_IMG
-    Q_TXT -. "Retrieved Logs" .-> FILTER
-    Q_IMG -. "Retrieved Photos" .-> FILTER
-    FILTER -- "Unified Context" --> LLM
-    LLM -- "Cited Response" --> UI
+graph TD
+    START(["START"]) --> PARSE["parse_query"]
+    PARSE --> TRIAGE["triage_query"]
+    TRIAGE --> RT["retrieve_text<br/>(MiniLM 384d)"]
+    RT -->|"text-only query"| RR["rerank_context"]
+    RT -->|"retrieval error"| SYN["synthesize_response"]
+    RT -->|"default"| RI["retrieve_images<br/>(CLIP 512d)"]
+    RI --> RR
+    RR --> SYN["synthesize_response<br/>(LangChain → Gemini)"]
+    SYN --> PM["persist_memory"]
+    PM --> END(["END"])
 ```
 
 ---
@@ -129,7 +124,7 @@ QDRANT_API_KEY=your_qdrant_api_key
 ### 3. Ingest Data
 
 ```bash
-python ingest_bulk.py
+python3 ingest_bulk.py
 ```
 
 This will:
@@ -138,21 +133,33 @@ This will:
 - Auto-classify disaster types and severity levels
 - Geocode locations for map visualization
 
+Ingestion is **idempotent**: point IDs are deterministic content hashes, so
+re-running `python3 ingest_bulk.py` updates existing points instead of creating
+duplicates.
+
 ### 4. Run the Application
 
 ```bash
 streamlit run app.py
 ```
 
+### 5. Run the Tests
+
+Unit tests mock Qdrant and Gemini and require **no API keys**:
+
+```bash
+pytest
+```
+
 ---
 
 ## 💡 Key Features
 
-### 🤖 Multi-Agent Architecture
-Three specialized agents handle different aspects of the pipeline:
-- **Triage Agent**: Classifies disaster type and severity using keyword heuristics
-- **Retrieval Agent**: Orchestrates parallel search with metadata filtering
-- **Synthesis Agent**: Generates cited, evidence-grounded responses via Gemini
+### 🤖 LangGraph + LangChain Orchestration
+- **LangGraph** runs the RAG pipeline as a typed state machine with explicit nodes and conditional routing
+- **LangChain** standardizes Gemini prompting (`ChatPromptTemplate`) and model invocation (`ChatGoogleGenerativeAI`)
+- **LangChain retrievers** wrap Qdrant text (MiniLM) and image (CLIP) vector search
+- **Triage** classifies disaster type and severity using keyword heuristics
 
 ### 🔍 Advanced Qdrant Integration
 - **Dual collections** with different vector dimensions (384d text, 512d CLIP)
@@ -183,30 +190,38 @@ Three specialized agents handle different aspects of the pipeline:
 ```
 Crisis-Intelligence-AI/
 ├── app.py                      # Main Streamlit entry point
-├── ingest_bulk.py              # Data ingestion with metadata enrichment
+├── ingest_bulk.py              # Idempotent data ingestion with metadata enrichment
 ├── requirements.txt            # Python dependencies
-├── .env.example                # API key template
+├── .env.example                # API key template (copy to .env)
+├── LICENSE                     # MIT license
 ├── data_logs.txt               # 61 Pan-India disaster text logs
 ├── data_images/                # 26 disaster photographs
 ├── src/
-│   ├── config.py               # Centralized configuration & constants
+│   ├── config.py               # Centralized configuration, constants & validation
 │   ├── embeddings.py           # Text & CLIP encoder wrappers
-│   ├── qdrant_manager.py       # Qdrant CRUD operations
-│   ├── retrieval.py            # Search engine with re-ranking
+│   ├── qdrant_manager.py       # Qdrant CRUD + deterministic IDs + search
+│   ├── retrieval.py            # Recency-decay helper (shared)
 │   ├── memory.py               # Episodic memory lifecycle
+│   ├── graph/                  # ── LangGraph workflow ──
+│   │   ├── state.py            # Typed CrisisState (TypedDict)
+│   │   └── crisis_graph.py     # StateGraph nodes + run_crisis_graph()
+│   ├── langchain_adapters/     # ── LangChain seams ──
+│   │   ├── llm.py              # ChatGoogleGenerativeAI + ChatPromptTemplate
+│   │   └── retrievers.py       # BaseRetriever adapters over Qdrant
 │   ├── agents/
-│   │   ├── triage_agent.py     # Disaster type & severity classifier
-│   │   ├── retrieval_agent.py  # Multi-collection search orchestrator
-│   │   └── synthesis_agent.py  # Gemini-powered response generator
+│   │   ├── triage_agent.py     # Disaster type & severity classifier (heuristic)
+│   │   ├── retrieval_agent.py  # Legacy helper (image-suppression heuristic)
+│   │   └── synthesis_agent.py  # Compat shim → LangChain LLM adapter
 │   ├── ui/
 │   │   ├── dashboard.py        # Main dashboard layout
-│   │   ├── chat.py             # Chat interface component
+│   │   ├── chat.py             # Chat interface (calls run_crisis_graph)
 │   │   ├── map_view.py         # Folium GIS map component
 │   │   ├── analytics.py        # Plotly analytics dashboard
 │   │   └── styles.py           # Custom dark theme CSS
 │   └── utils/
 │       ├── location_extractor.py  # Geocoding utility
 │       └── logger.py              # Structured logging
+├── tests/                      # pytest suite (mocks Qdrant + Gemini, no keys)
 ├── documents/
 │   ├── Final_Report.md         # Project report (10 pages)
 │   └── architecture.png        # System architecture diagram
@@ -237,6 +252,35 @@ Crisis-Intelligence-AI/
 
 ---
 
+## 🎤 How to Explain This in an Interview
+
+A truthful, 60-second walkthrough you can memorize:
+
+- **LangGraph orchestrates the RAG pipeline as a typed state machine.** Each step
+  (`parse_query → triage_query → retrieve_text → retrieve_images → rerank_context
+  → synthesize_response → persist_memory`) is a node, and conditional edges skip
+  image retrieval for text-only queries and short-circuit on retrieval failure.
+- **LangChain standardizes the model layer.** Gemini is invoked through
+  `ChatGoogleGenerativeAI` with a reusable `ChatPromptTemplate`, and Qdrant search
+  is exposed through LangChain `BaseRetriever` adapters.
+- **Qdrant stores two separate vector spaces** — a 384d text collection and a 512d
+  image collection — so embedding dimensions never mix.
+- **MiniLM (`all-MiniLM-L6-v2`) handles text retrieval**; **CLIP (`ViT-B-32`)
+  handles image retrieval from text queries** via shared text–image embedding space.
+- **Gemini 2.5 Flash generates grounded, cited responses** strictly from retrieved
+  evidence (`[Source N]` citations).
+- **Streamlit exposes the operational dashboard** (chat, map, analytics).
+- **Triage (disaster type + severity) is heuristic keyword matching**, not a trained
+  model — stated honestly.
+- **Engineering touches:** idempotent ingestion via deterministic content-hash point
+  IDs, base-evidence retrieval filtered to `role="system_report"` so conversation
+  memory doesn't pollute grounding, actionable error surfacing instead of silent
+  failures, and a mocked pytest suite that needs no API keys.
+
+---
+
 ## 📜 License
 
-This project was built for **Convolve 4.0**, a Pan-IIT AI/ML Hackathon, as part of the Qdrant problem statement on *Search, Memory, and Recommendations for Societal Impact*.
+Licensed under the [MIT License](LICENSE).
+
+This project was originally built for **Convolve 4.0**, a Pan-IIT AI/ML Hackathon, as part of the Qdrant problem statement on *Search, Memory, and Recommendations for Societal Impact*.
