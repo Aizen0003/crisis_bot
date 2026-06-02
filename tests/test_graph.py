@@ -84,6 +84,23 @@ def test_run_graph_text_only_skips_image_search(mock_backends):
     assert mock_backends["images"] == 0  # image retrieval was skipped entirely
 
 
+def test_triage_fallback_filter_applied_when_no_ui_filter(mock_backends):
+    # No UI disaster filter set; the query clearly triages to "earthquake",
+    # so that type is used as a soft fallback retrieval filter.
+    result = run_crisis_graph("earthquake tremor aftershock reported",
+                              filters={}, persist=False)
+    assert result["filters_applied"].get("disaster_type") == "earthquake"
+    assert "Query triage: earthquake" in result["reasoning_trace"]
+
+
+def test_explicit_ui_filter_overrides_triage_fallback(mock_backends):
+    # Query triages to "earthquake", but the user explicitly selected Flood in
+    # the UI — the explicit filter must win over the triage fallback.
+    result = run_crisis_graph("earthquake tremor aftershock reported",
+                              filters={"disaster": "Flood"}, persist=False)
+    assert result["filters_applied"].get("disaster_type") == "flood"
+
+
 def test_run_graph_handles_text_search_failure(monkeypatch):
     from src.qdrant_manager import QdrantSearchError
 

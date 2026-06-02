@@ -37,6 +37,14 @@ from src.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
+# When True, and the user has NOT set an explicit disaster-type UI filter, the
+# triage-inferred disaster_type is used as a SOFT fallback retrieval filter (see
+# retrieve_text). Triaged severity is intentionally never used as a filter:
+# keyword severity is noisy and hard-filtering on it hurts recall. Flip to False
+# to disable the fallback entirely.
+USE_TRIAGE_FALLBACK_FILTER = True
+
+
 # ── Nodes ────────────────────────────────────────────────────────────────────
 def parse_query(state: CrisisState) -> dict:
     """Detect text-only intent and normalize UI filters into Qdrant filters."""
@@ -67,18 +75,33 @@ def triage_query(state: CrisisState) -> dict:
 
 
 def retrieve_text(state: CrisisState) -> dict:
-    """Retrieve grounded text evidence (MiniLM 384d, base reports only)."""
+    """Retrieve grounded text evidence (MiniLM 384d, base reports only).
+
+    When the user has not set an explicit disaster-type UI filter, fall back to
+    the triage-inferred ``disaster_type`` as a soft filter — but only when the
+    classifier returned a concrete type (not ``"other"``) and the fallback is
+    enabled. Triaged severity is deliberately NOT used as a filter (see
+    ``USE_TRIAGE_FALLBACK_FILTER``). The effective filters are written back to
+    state so ``filters_applied`` reflects what was actually used.
+    """
+    filters = dict(state.get("qdrant_filters") or {})
+
+    if USE_TRIAGE_FALLBACK_FILTER and "disaster_type" not in filters:
+        triaged_type = (state.get("triage") or {}).get("disaster_type")
+        if triaged_type and triaged_type != "other":
+            filters["disaster_type"] = triaged_type
+
     retriever = TextEvidenceRetriever(
         limit=TEXT_SEARCH_LIMIT,
-        filters=state.get("qdrant_filters") or None,
+        filters=filters or None,
     )
     try:
         docs = retriever.invoke(state["query"])
-        return {"text_docs": docs}
+        return {"text_docs": docs, "qdrant_filters": filters}
     except QdrantSearchError as e:
         # Text is the core evidence — failure here is fatal for grounding.
         logger.error(f"retrieve_text failed: {e}")
-        return {"text_docs": [], "error": str(e)}
+        return {"text_docs": [], "qdrant_filters": filters, "error": str(e)}
 
 
 def retrieve_images(state: CrisisState) -> dict:
@@ -99,6 +122,12 @@ def rerank_context(state: CrisisState) -> dict:
     image_docs = state.get("image_docs") or []
 
     # ── Text: recency re-rank ────────────────────────────────────────────
+    # NOTE: recency decay only differentiates results that carry *distinct*
+    # timestamps. Base reports (role="system_report") are all ingested with the
+    # SAME timestamp, so decay is a no-op among them. It is meaningful only for
+    # stored conversation-memory turns (user/assistant), which carry per-turn
+    # timestamps — the helper is kept here so that path stays correctly ranked
+    # if memory turns are ever surfaced into this rerank step.
     scored = []
     for doc in text_docs:
         base = doc.metadata.get("score", 0.0)
@@ -165,15 +194,26 @@ def rerank_context(state: CrisisState) -> dict:
     else:
         visual_context = "No relevant images found."
 
+    # Surface the query triage so it's visible in the evidence panel and
+    # demonstrably feeds the disaster_type fallback filter (see retrieve_text).
+    triage = state.get("triage") or {}
+    triage_line = ""
+    if triage:
+        triage_line = (
+            f"Query triage: {triage.get('disaster_type', 'unknown')} / "
+            f"{triage.get('severity', 'unknown')}\n"
+        )
+
     if reasoning_parts:
         reasoning_trace = (
             f"Query: \"{state['query']}\"\n"
+            f"{triage_line}"
             f"Text matches: {len(text_results)} | "
             f"Image matches: {len(image_results)}\n"
             + "\n".join(reasoning_parts)
         )
     else:
-        reasoning_trace = "No relevant data found in any collection."
+        reasoning_trace = triage_line + "No relevant data found in any collection."
 
     logger.info(
         f"Retrieval complete: {len(text_results)} text, {len(image_results)} images"

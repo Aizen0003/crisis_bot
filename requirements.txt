@@ -29,7 +29,8 @@ python-dotenv>=1.0.0
 # GIS & Mapping
 folium>=0.15.0
 streamlit-folium>=0.15.0
-geopy>=2.4.0
+# NOTE: geocoding uses a static dictionary (src/utils/location_extractor.py),
+# not an online service, so geopy is intentionally NOT a dependency.
 
 # Analytics & Visualization
 plotly>=5.18.0

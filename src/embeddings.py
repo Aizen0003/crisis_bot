@@ -1,6 +1,15 @@
 """
 Embedding model wrappers for text and image encoding.
 Provides a unified interface for both MiniLM (text) and CLIP (vision) encoders.
+
+Dimension map (see src/config.py):
+  - MiniLM `all-MiniLM-L6-v2`  → 384-d  (TEXT_VECTOR_DIM)  — text collection
+  - CLIP   `clip-ViT-B-32`     → 512-d  (CLIP_VECTOR_DIM)  — image collection
+
+Note the text/image split: `encode_text` uses MiniLM (384-d), but BOTH
+`encode_query_for_images` (text→CLIP) and `encode_image` (image→CLIP) use CLIP
+and produce the SAME 512-d vector space — that shared space is exactly what
+makes cross-modal (text-query → image) retrieval possible.
 """
 
 import streamlit as st
@@ -45,6 +54,9 @@ def encode_query_for_images(query: str) -> list[float]:
     Encode a text query into CLIP space for cross-modal image search.
     CLIP aligns text and image embeddings in the same space,
     so a text query can retrieve semantically matching images.
+
+    Returns a 512-d CLIP vector (CLIP_VECTOR_DIM) — the SAME dimension and space
+    as `encode_image`, which is why a text query can match stored image vectors.
     """
     model = load_clip_model()
     return model.encode(query).tolist()

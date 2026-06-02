@@ -21,15 +21,14 @@ def get_custom_css() -> str:
 
     /* ── Header Bar ─────────────────────────────────────────────────── */
     .main-header {
-        background: linear-gradient(135deg, #0d1117 0%, #161b22 50%, #1a0a0a 100%);
-        border: 1px solid rgba(255, 23, 68, 0.3);
+        background: linear-gradient(135deg, #0d1117 0%, #161b22 100%);
+        border: 1px solid #30363d;
         border-radius: 12px;
         padding: 1.2rem 1.8rem;
         margin-bottom: 1.5rem;
         display: flex;
         align-items: center;
         gap: 1rem;
-        box-shadow: 0 4px 20px rgba(255, 23, 68, 0.1);
     }
 
     .main-header h1 {
@@ -183,31 +182,6 @@ def get_custom_css() -> str:
     .stTabs [aria-selected="true"] {
         color: #FF1744 !important;
         border-bottom: 2px solid #FF1744 !important;
-    }
-
-    /* ── Animations ─────────────────────────────────────────────────── */
-    @keyframes pulse-red {
-        0%, 100% { opacity: 1; }
-        50% { opacity: 0.5; }
-    }
-
-    .pulse-dot {
-        width: 8px;
-        height: 8px;
-        background: #FF1744;
-        border-radius: 50%;
-        display: inline-block;
-        animation: pulse-red 1.5s ease-in-out infinite;
-        margin-right: 0.5rem;
-    }
-
-    .live-indicator {
-        display: inline-flex;
-        align-items: center;
-        font-size: 0.75rem;
-        color: #FF1744;
-        font-weight: 600;
-        font-family: 'JetBrains Mono', monospace;
     }
 
     /* ── Scrollbar ──────────────────────────────────────────────────── */

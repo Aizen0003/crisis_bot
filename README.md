@@ -62,8 +62,8 @@ instead of calling the LLM.
 | **Storage** | Text memory | Qdrant `user_episodic_memory` collection (384d) |
 | | Visual memory | Qdrant `disaster_multimodal` collection (512d) |
 | **Retrieval** | Semantic search | Dual-stream text + cross-modal image vector search |
-| | Filtering | Metadata filters (disaster type, severity, region) |
-| | Re-ranking | Recency-based score decay |
+| | Filtering | Disaster-type metadata filter (UI) + triage-inferred fallback; severity/region accepted programmatically |
+| | Re-ranking | Recency-based score decay (meaningful for conversation-memory turns) |
 | **Generation** | LLM synthesis | Google Gemini 2.5 Flash with citation protocol |
 | **UI** | Dashboard | Streamlit with custom dark theme |
 | | Map | Folium with geocoded disaster markers |
@@ -159,13 +159,13 @@ pytest
 - **LangGraph** runs the RAG pipeline as a typed state machine with explicit nodes and conditional routing
 - **LangChain** standardizes Gemini prompting (`ChatPromptTemplate`) and model invocation (`ChatGoogleGenerativeAI`)
 - **LangChain retrievers** wrap Qdrant text (MiniLM) and image (CLIP) vector search
-- **Triage** classifies disaster type and severity using keyword heuristics
+- **Triage** classifies the query's disaster type and severity via keyword heuristics; the inferred disaster type is used as an automatic fallback retrieval filter when the user hasn't set one
 
 ### 🔍 Advanced Qdrant Integration
 - **Dual collections** with different vector dimensions (384d text, 512d CLIP)
-- **Metadata filtering** by disaster type, severity, and region
+- **Metadata filtering**: the UI exposes a disaster-type filter (with an automatic triage-inferred fallback); the retriever also accepts severity/region filters programmatically
 - **Smart memory management**: "Safe Reset" preserves base data while clearing conversation history
-- **Recency-based decay**: Older memories get reduced relevance scores
+- **Recency-based decay**: timestamped conversation-memory turns lose relevance with age (base reports share a single ingest timestamp, so decay does not differentiate among them)
 
 ### 🗺️ Interactive Crisis Map
 - Folium map centered on India with CartoDB dark tiles
@@ -271,7 +271,11 @@ A truthful, 60-second walkthrough you can memorize:
   evidence (`[Source N]` citations).
 - **Streamlit exposes the operational dashboard** (chat, map, analytics).
 - **Triage (disaster type + severity) is heuristic keyword matching**, not a trained
-  model — stated honestly.
+  model — stated honestly. The triaged disaster type feeds a *soft fallback*
+  retrieval filter when the user hasn't picked one (and is shown in the evidence
+  panel's reasoning trace); triaged **severity is deliberately NOT used as a
+  filter** because keyword severity is too noisy to hard-filter on. The UI sidebar
+  therefore exposes only a disaster-type filter — no dead controls.
 - **Engineering touches:** idempotent ingestion via deterministic content-hash point
   IDs, base-evidence retrieval filtered to `role="system_report"` so conversation
   memory doesn't pollute grounding, actionable error surfacing instead of silent

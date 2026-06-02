@@ -1,6 +1,12 @@
 """
 Location extraction and geocoding utilities.
 Extracts location names from disaster text logs and maps them to coordinates.
+
+Geocoding is intentionally backed by a static `LOCATION_COORDINATES` dictionary
+(in src/config.py) rather than an online geocoder (e.g. geopy/Nominatim). This
+is a deliberate choice for this demo: it has no network dependency, is fully
+deterministic and fast, and never hangs ingestion on a flaky lookup. The dataset
+is a fixed set of Pan-India locations, so the dictionary covers it completely.
 """
 
 from src.config import LOCATION_COORDINATES

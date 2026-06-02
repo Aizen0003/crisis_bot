@@ -1,11 +1,21 @@
 """
 Chat interface component for the Crisis Intelligence Command Center.
 Handles message display, user input, and the full RAG interaction loop.
+
+Render model (single code path): `handle_chat_input` only captures input, runs
+the workflow, stores the turn in session_state, and triggers a rerun. ALL
+messages — including the one just produced — are rendered exactly once by
+`render_message_history` from session_state. This avoids double-rendering the
+latest message/evidence panel and keeps `st.chat_input` anchored below a
+height-bounded, scrollable history container instead of being pushed down the
+viewport as the conversation grows.
 """
 
-import streamlit as st
-from src.graph import run_crisis_graph
 import os
+
+import streamlit as st
+
+from src.graph import run_crisis_graph
 
 
 def init_chat_state():
@@ -15,63 +25,88 @@ def init_chat_state():
 
 
 def render_message_history():
-    """Render all previous messages with their images and sources."""
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
-            
-            # Show retrieved images
-            if message.get("images"):
-                for img_info in message["images"]:
-                    if os.path.exists(img_info["filename"]):
-                        st.image(
-                            img_info["filename"],
-                            caption=f"📸 {img_info['description']} (Score: {img_info['score']:.2f})",
-                            use_container_width=True,
-                        )
-            
-            # Show evidence panel
-            if message["role"] == "assistant" and message.get("sources"):
-                with st.expander("🔍 Evidence & Reasoning Trace", expanded=False):
-                    _render_evidence_panel(message)
+    """Render the full conversation (messages + images + evidence) from state.
+
+    Everything lives inside a single height-bounded, scrollable container so a
+    growing conversation scrolls *inside* the box rather than dragging the chat
+    input down the page each turn. This is the ONLY place messages and their
+    evidence panels are rendered.
+    """
+    history = st.container(height=500)
+    with history:
+        for message in st.session_state.messages:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
+
+                # Only assistant turns carry evidence/images/errors.
+                if message["role"] != "assistant":
+                    continue
+
+                if message.get("error"):
+                    st.error(message["error"])
+
+                if message.get("show_images", True):
+                    _render_images(message.get("images") or [])
+                else:
+                    st.info("📷 Image display suppressed by user request.")
+
+                if message.get("sources"):
+                    with st.expander("🔍 Evidence & Reasoning Trace", expanded=False):
+                        _render_evidence_panel(message)
+
+
+def _render_images(images: list[dict]):
+    """Render retrieved images inline, flagging any that are missing on disk."""
+    for img in images:
+        filename = img.get("filename", "")
+        if filename and os.path.exists(filename):
+            st.image(
+                filename,
+                caption=f"📸 {img['description']} (Score: {img['score']:.2f})",
+                use_container_width=True,
+            )
+        else:
+            # Don't silently skip — say the file is missing so the panel isn't
+            # mysteriously empty when an expected image can't be loaded.
+            st.caption(f"🖼️ Image unavailable: {os.path.basename(filename) or 'unknown'}")
 
 
 def _render_evidence_panel(message: dict):
     """Render the expandable evidence panel for an assistant message."""
     col1, col2 = st.columns([3, 2])
-    
+
     with col1:
         st.markdown("**📄 Text Sources Retrieved:**")
         if message.get("sources"):
             for i, src in enumerate(message["sources"], 1):
                 severity = src.get("metadata", {}).get("severity", "")
-                icon = ""
-                if severity == "CRITICAL":
-                    icon = "🔴"
-                elif severity == "HIGH":
-                    icon = "🟠"
-                elif severity == "MEDIUM":
-                    icon = "🟡"
-                elif severity == "LOW":
-                    icon = "🟢"
-                    
+                icon = {
+                    "CRITICAL": "🔴", "HIGH": "🟠", "MEDIUM": "🟡", "LOW": "🟢",
+                }.get(severity, "")
                 st.caption(
                     f"{icon} **[Source {i}]** (Score: {src['score']:.3f})\n"
                     f"{src['text'][:150]}..."
                 )
         else:
             st.caption("No relevant text sources found.")
-    
+
     with col2:
         st.markdown("**🖼️ Visual Evidence:**")
-        if message.get("images"):
-            for img_info in message["images"]:
-                if os.path.exists(img_info["filename"]):
-                    st.image(img_info["filename"], width=200)
+        images = message.get("images") or []
+        if images:
+            for img_info in images:
+                filename = img_info.get("filename", "")
+                if filename and os.path.exists(filename):
+                    st.image(filename, width=200)
                     st.caption(f"Match: {img_info['score']:.2f} — {img_info['description']}")
+                else:
+                    st.caption(
+                        f"🖼️ unavailable — {img_info['description']} "
+                        f"(Match: {img_info['score']:.2f})"
+                    )
         else:
             st.caption("No matching images found.")
-    
+
     # Reasoning trace
     if message.get("reasoning_trace"):
         st.markdown("**🧠 Reasoning Trace:**")
@@ -81,73 +116,41 @@ def _render_evidence_panel(message: dict):
         )
 
 
-def handle_chat_input(disaster_filter: str = None, severity_filter: str = None,
-                      region_filter: str = None):
+def handle_chat_input(disaster_filter: str = None, region_filter: str = None):
     """
-    Handle user chat input, execute RAG pipeline, and display response.
+    Capture the user's input, run the RAG workflow, store the turn, and rerun.
+
+    Rendering is intentionally NOT done here — see the module docstring. We only
+    mutate session_state and trigger a rerun so `render_message_history` shows
+    the new turn through the single render path.
     """
     prompt = st.chat_input("Ask about a disaster scenario...")
-    
     if not prompt:
         return
-    
-    # ── Display user message ──────────────────────────────────────
+
     st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.markdown(prompt)
-    
+
     # ── Run the LangGraph RAG workflow (retrieval + synthesis + memory) ──
     with st.spinner("🧠 Running crisis intelligence workflow..."):
-        retrieval_results = run_crisis_graph(
+        results = run_crisis_graph(
             query=prompt,
             filters={
                 "disaster": disaster_filter,
-                "severity": severity_filter,
                 "region": region_filter,
             },
         )
-    response_text = retrieval_results["response"]
 
-    # Surface any actionable backend error to the operator.
-    if retrieval_results.get("error"):
-        st.error(retrieval_results["error"])
-
-    # ── Display assistant response ────────────────────────────────
-    with st.chat_message("assistant"):
-        st.markdown(response_text)
-        
-        # Show images if relevant and not suppressed
-        image_infos = []
-        if retrieval_results["show_images"] and retrieval_results["image_results"]:
-            for img in retrieval_results["image_results"]:
-                filename = img["filename"]
-                if os.path.exists(filename):
-                    st.image(
-                        filename,
-                        caption=f"📸 {img['description']} (Score: {img['score']:.2f})",
-                        use_container_width=True,
-                    )
-                    image_infos.append(img)
-        elif not retrieval_results["show_images"]:
-            st.info("📷 Image display suppressed by user request.")
-        
-        # Evidence panel
-        with st.expander("🔍 Evidence & Reasoning Trace", expanded=False):
-            _render_evidence_panel({
-                "sources": retrieval_results["text_results"],
-                "images": image_infos,
-                "reasoning_trace": retrieval_results["reasoning_trace"],
-            })
-    
-    # ── Store in session state ────────────────────────────────────
-    # (Episodic memory in Qdrant is persisted inside the LangGraph workflow's
-    # persist_memory node, so we do not write it again here.)
+    # Store the assistant turn. Episodic memory in Qdrant is persisted inside the
+    # workflow's persist_memory node, so we do not write it again here.
     st.session_state.messages.append({
         "role": "assistant",
-        "content": response_text,
-        "images": image_infos,
-        "sources": retrieval_results["text_results"],
-        "reasoning_trace": retrieval_results["reasoning_trace"],
+        "content": results["response"],
+        "images": results["image_results"],
+        "sources": results["text_results"],
+        "reasoning_trace": results["reasoning_trace"],
+        "show_images": results["show_images"],
+        "error": results.get("error"),
     })
 
-    return retrieval_results
+    # Re-run so the freshly stored turn renders through render_message_history().
+    st.rerun()

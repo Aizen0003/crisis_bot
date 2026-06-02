@@ -8,7 +8,7 @@ from src.ui.styles import get_custom_css
 from src.ui.chat import init_chat_state, render_message_history, handle_chat_input
 from src.ui.map_view import render_map_view
 from src.ui.analytics import render_analytics
-from src.qdrant_manager import ensure_collections, get_collection_stats
+from src.qdrant_manager import ensure_collections
 from src.memory import reset_scenario
 from src.config import (
     APP_TITLE, APP_ICON, APP_LAYOUT,
@@ -34,16 +34,14 @@ def setup_page():
 
 
 def render_header():
-    """Render the main header bar."""
+    """Render the main header bar: title + a single, honest status line."""
     st.markdown(
         f"""
         <div class="main-header">
             <div>
                 <h1>{APP_ICON} {APP_TITLE}</h1>
-                <p class="subtitle">Multimodal RAG System for National Disaster Response 
-                &nbsp;|&nbsp; 
-                <span class="live-indicator"><span class="pulse-dot"></span>LIVE</span>
-                </p>
+                <p class="subtitle">Multimodal RAG for National Disaster Response
+                &nbsp;·&nbsp; LangGraph orchestration &nbsp;·&nbsp; Qdrant vector search</p>
             </div>
         </div>
         """,
@@ -53,60 +51,37 @@ def render_header():
 
 def render_sidebar() -> dict:
     """
-    Render the sidebar with system controls and filters.
-    Returns the active filter settings.
+    Render the sidebar: search filter, scenario controls, and compact system info.
+
+    Returns the active filter settings. Only the filters the graph actually
+    applies from the UI are exposed here — no dead controls. (Database stats live
+    in the Analytics tab, so they are not duplicated here.)
     """
     filters = {}
-    
+
     with st.sidebar:
         st.markdown("## 🧠 Command Console")
-        
-        # ── System Status ────────────────────────────────────────────
-        stats = get_collection_stats()
-        episodic = stats.get("user_episodic_memory", {})
-        multimodal = stats.get("disaster_multimodal", {})
-        
-        st.markdown(
-            f"""
-            <div style="background: rgba(22,27,34,0.8); border: 1px solid #30363d; 
-                        border-radius: 8px; padding: 0.8rem; margin-bottom: 1rem;">
-                <p style="margin:0; font-size: 0.75rem; color: #8b949e; 
-                          text-transform: uppercase; letter-spacing: 0.08em;">
-                    Database Status
-                </p>
-                <p style="margin: 0.3rem 0 0 0; font-size: 0.85rem; color: #e6edf3;">
-                    📄 {episodic.get('points_count', 0)} text vectors &nbsp;|&nbsp; 
-                    🖼️ {multimodal.get('points_count', 0)} image vectors
-                </p>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        
-        # ── Search Filters ───────────────────────────────────────────
-        st.markdown("### 🔎 Search Filters")
-        
+
+        # ── Search Filter ────────────────────────────────────────────
+        # Only disaster type is exposed: it's the one filter the graph applies
+        # from the UI (triage supplies an automatic fallback when unset). Severity
+        # is deliberately NOT a filter — keyword-triaged severity is noisy and
+        # hard-filtering on it hurts recall.
+        st.markdown("### 🔎 Search Filter")
+
         disaster_filter = st.selectbox(
             "Disaster Type",
             ["All", "Flood", "Earthquake", "Cyclone", "Landslide", "Fire",
              "Tsunami", "Drought", "Industrial", "Infrastructure"],
             key="disaster_filter",
         )
-        
-        severity_filter = st.selectbox(
-            "Severity Level",
-            ["All", "CRITICAL", "HIGH", "MEDIUM", "LOW"],
-            key="severity_filter",
-        )
-        
         filters["disaster"] = disaster_filter
-        filters["severity"] = severity_filter
-        
+
         st.markdown("---")
-        
+
         # ── Scenario Controls ────────────────────────────────────────
         st.markdown("### ⚙️ Scenario Controls")
-        
+
         if st.button("🔄 Start New Scenario", use_container_width=True, type="primary"):
             success = reset_scenario()
             if success:
@@ -115,23 +90,24 @@ def render_sidebar() -> dict:
                 st.error("❌ Failed to clear memory.")
             st.session_state.messages = []
             st.rerun()
-        
+
         st.caption(
             "Clears conversation history while preserving "
             "all ingested disaster reports and images."
         )
-        
+
         st.markdown("---")
-        
-        # ── System Info ──────────────────────────────────────────────
+
+        # ── System Info (compact) ────────────────────────────────────
         st.markdown("### ℹ️ System Info")
         st.caption("**Orchestration:** LangGraph + LangChain")
-        st.caption("**Models:** MiniLM-L6-v2 + CLIP ViT-B-32")
-        st.caption("**LLM:** Google Gemini 2.5 Flash")
+        st.caption("**Models:** MiniLM-L6-v2 · CLIP ViT-B-32 · Gemini 2.5 Flash")
         st.caption("**Vector DB:** Qdrant Cloud")
-        st.caption(f"**Text Threshold:** > {TEXT_RELEVANCE_THRESHOLD}")
-        st.caption(f"**Image Threshold:** > {IMAGE_RELEVANCE_THRESHOLD}")
-    
+        st.caption(
+            f"**Thresholds:** text > {TEXT_RELEVANCE_THRESHOLD} · "
+            f"image > {IMAGE_RELEVANCE_THRESHOLD}"
+        )
+
     return filters
 
 
@@ -144,12 +120,13 @@ def render_main_content(filters: dict):
     ])
     
     with tab_chat:
+        # st.chat_input lives inside this tab (not at the top level) so it does
+        # not bleed onto the Map/Analytics tabs. render_message_history() bounds
+        # the conversation in a scrollable, height-fixed container so the input
+        # stays anchored just below it instead of being dragged down. See chat.py.
         render_message_history()
-        handle_chat_input(
-            disaster_filter=filters.get("disaster"),
-            severity_filter=filters.get("severity"),
-        )
-    
+        handle_chat_input(disaster_filter=filters.get("disaster"))
+
     with tab_map:
         render_map_view()
     
