@@ -222,9 +222,6 @@ Crisis-Intelligence-AI/
 │       ├── location_extractor.py  # Geocoding utility
 │       └── logger.py              # Structured logging
 ├── tests/                      # pytest suite (mocks Qdrant + Gemini, no keys)
-├── documents/
-│   ├── Final_Report.md         # Project report (10 pages)
-│   └── architecture.png        # System architecture diagram
 └── README.md
 ```
 
