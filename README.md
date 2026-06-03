@@ -241,42 +241,9 @@ Crisis-Intelligence-AI/
 
 ## 🚀 Future Roadmap
 
-- [ ] Voice interface via Speech-to-Text for radio commands
 - [ ] Local LLM deployment (Llama 3) for offline operation
 - [ ] Real-time data streaming from social media APIs
-- [ ] Satellite imagery integration for damage assessment
 - [ ] Multi-language support for regional disaster communication
-
----
-
-## 🎤 How to Explain This in an Interview
-
-A truthful, 60-second walkthrough you can memorize:
-
-- **LangGraph orchestrates the RAG pipeline as a typed state machine.** Each step
-  (`parse_query → triage_query → retrieve_text → retrieve_images → rerank_context
-  → synthesize_response → persist_memory`) is a node, and conditional edges skip
-  image retrieval for text-only queries and short-circuit on retrieval failure.
-- **LangChain standardizes the model layer.** Gemini is invoked through
-  `ChatGoogleGenerativeAI` with a reusable `ChatPromptTemplate`, and Qdrant search
-  is exposed through LangChain `BaseRetriever` adapters.
-- **Qdrant stores two separate vector spaces** — a 384d text collection and a 512d
-  image collection — so embedding dimensions never mix.
-- **MiniLM (`all-MiniLM-L6-v2`) handles text retrieval**; **CLIP (`ViT-B-32`)
-  handles image retrieval from text queries** via shared text–image embedding space.
-- **Gemini 2.5 Flash generates grounded, cited responses** strictly from retrieved
-  evidence (`[Source N]` citations).
-- **Streamlit exposes the operational dashboard** (chat, map, analytics).
-- **Triage (disaster type + severity) is heuristic keyword matching**, not a trained
-  model — stated honestly. The triaged disaster type feeds a *soft fallback*
-  retrieval filter when the user hasn't picked one (and is shown in the evidence
-  panel's reasoning trace); triaged **severity is deliberately NOT used as a
-  filter** because keyword severity is too noisy to hard-filter on. The UI sidebar
-  therefore exposes only a disaster-type filter — no dead controls.
-- **Engineering touches:** idempotent ingestion via deterministic content-hash point
-  IDs, base-evidence retrieval filtered to `role="system_report"` so conversation
-  memory doesn't pollute grounding, actionable error surfacing instead of silent
-  failures, and a mocked pytest suite that needs no API keys.
 
 ---
 
